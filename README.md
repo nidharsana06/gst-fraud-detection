@@ -174,7 +174,7 @@ The main objective of this project is to demonstrate how **machine learning and 
 
 This project is an academic/prototype fraud-risk detection system. Its predictions should not be treated as definitive proof of GST fraud. High-risk transactions require further investigation and verification.
 
-## 👩‍💻 Author
+## 👩‍💻 Authors
 
 **Nidharsana K S**
 **Nithisri K A**
