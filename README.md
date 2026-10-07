@@ -176,7 +176,6 @@ This project is an academic/prototype fraud-risk detection system. Its predictio
 
 ## 👩‍💻 Author
 
-Nidharsana KS
-Nithisri K A
+**Nidharsana K S**
+**Nithisri K A**
 
-B.Tech Artificial Intelligence and Machine Learning
