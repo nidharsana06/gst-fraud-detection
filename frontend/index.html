@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ledger AI — GST Invoice Fraud Detection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="brand-mark">LEDGER<span>·AI</span></div>
+    <div class="brand-sub">GST Invoice Fraud Detection · MSME Compliance</div>
+  </div>
+  <div class="topbar-meta">
+    <div><div id="clock">—</div>
+    <div><span class="live">Live · Hybrid rules + Isolation Forest · v2.1</span></div></div>
+    <button id="themeBtn" title="Toggle dark mode">🌙 Theme</button>
+  </div>
+</div>
+
+<div class="shell">
+
+  <!-- Intake / upload -->
+  <div class="intake">
+    <div class="intake-icon">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+    </div>
+    <div class="intake-text">
+      <h2>Submit an invoice for verification</h2>
+      <p>PDF, PNG/JPG, CSV, or Excel — one file may contain a single invoice or a batch.</p>
+    </div>
+    <label class="dropzone" id="dropzone">
+      <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg,.csv,.xlsx,.xls">
+      <span class="btn" id="chooseBtn">Choose file</span>
+      <span class="file-hint" id="fileHint">No file selected</span>
+    </label>
+    <button class="btn btn-ghost" id="sampleBtn" title="Load bundled sample_data/sample_invoices.csv">Try sample batch</button>
+    <button class="btn btn-ghost" id="clearBtn" title="Delete every invoice from the ledger">Clear ledger</button>
+  </div>
+
+  <!-- Stat cards -->
+  <div class="stat-row">
+    <div class="stat-card">
+      <div class="stat-label">Invoices audited</div>
+      <div class="stat-value" id="statTotal">0</div>
+      <div class="stat-sub" id="statTotalSub">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Avg. fraud score</div>
+      <div class="stat-value" id="statAvg">0</div>
+      <div class="stat-sub">out of 100</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">High risk invoices</div>
+      <div class="stat-value" id="statHigh">0</div>
+      <div class="stat-sub" id="statHighSub">₹0 flagged</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Compliance failures</div>
+      <div class="stat-value" id="statFail">0</div>
+      <div class="stat-sub">failed a GST rule</div>
+    </div>
+  </div>
+
+  <!-- Main grid -->
+  <div class="main-grid">
+    <div class="panel">
+      <div class="panel-header">
+        <h3>Invoice ledger</h3>
+        <div class="pill-group" id="filterPills">
+          <button class="pill active" data-risk="">All</button>
+          <button class="pill" data-risk="Low">Low</button>
+          <button class="pill" data-risk="Medium">Medium</button>
+          <button class="pill" data-risk="High">High</button>
+        </div>
+      </div>
+      <div class="panel-body">
+        <table class="ledger">
+          <thead>
+            <tr>
+              <th>Invoice</th>
+              <th>Vendor GSTIN</th>
+              <th>Date</th>
+              <th style="text-align:right">Total</th>
+              <th>Risk</th>
+            </tr>
+          </thead>
+          <tbody id="ledgerBody"></tbody>
+        </table>
+        <div class="empty-state" id="emptyState">
+          <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+          <div>No invoices audited yet. Submit one above to get started.</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:20px;">
+      <div class="panel">
+        <div class="panel-header"><h3>Risk distribution</h3></div>
+        <div class="panel-body">
+          <div class="donut-wrap"><canvas id="riskDonut" width="180" height="180"></canvas></div>
+          <div class="legend-row"><span class="legend-label"><span class="legend-dot" style="background:#2f6e52"></span>Low</span><span class="legend-value" id="legLow">0</span></div>
+          <div class="legend-row"><span class="legend-label"><span class="legend-dot" style="background:#b3811f"></span>Medium</span><span class="legend-value" id="legMed">0</span></div>
+          <div class="legend-row"><span class="legend-label"><span class="legend-dot" style="background:#ad3628"></span>High</span><span class="legend-value" id="legHigh">0</span></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header"><h3>Fraud score trend</h3></div>
+        <div class="panel-body pad">
+          <canvas id="trendChart" height="130"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Intelligence -->
+  <div class="intel-grid">
+    <div class="panel"><div class="panel-header"><h3>Model validation</h3><span class="src" id="mSrc">—</span></div>
+      <div class="panel-body pad"><div class="metric-row" id="metricRow"></div><canvas id="typChart" height="150"></canvas></div></div>
+    <div class="panel"><div class="panel-header"><h3>Counterparty risk network</h3><span class="src">node colour = worst invoice score</span></div>
+      <div class="panel-body pad"><canvas id="netCanvas" width="640" height="340"></canvas></div></div>
+    <div class="panel"><div class="panel-header"><h3>Riskiest vendors</h3></div>
+      <div class="panel-body"><table class="ledger"><thead><tr><th>Vendor</th><th>Invoices</th><th>High</th><th style="text-align:right">Avg score</th></tr></thead><tbody id="vendorBody"></tbody></table></div></div>
+  </div>
+</div>
+
+<!-- Invoice detail modal -->
+<div class="modal-backdrop" id="modalBackdrop" style="display:none;">
+  <div class="modal">
+    <div class="modal-header">
+      <div>
+        <h2 id="modalInvNo">Invoice</h2>
+        <div class="sub" id="modalVendor">—</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:14px;">
+        <span class="stamp stamp-lg" id="modalStamp">LOW</span>
+        <button class="modal-close" id="modalClose">&times;</button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <div class="detail-grid" id="modalDetailGrid"></div>
+      <h3 style="font-family:'Space Grotesk',sans-serif; font-size:14px; margin:18px 0 8px;">GST compliance checks</h3>
+      <div id="modalChecks"></div>
+      <h3 style="font-family:'Space Grotesk',sans-serif; font-size:14px; margin:18px 0 8px;">Fraud risk factors</h3>
+      <ul class="reason-list" id="modalReasons"></ul>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="modalDownload">Download audit report (PDF)</button>
+      <button class="btn btn-ghost" id="modalCloseBtn">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
