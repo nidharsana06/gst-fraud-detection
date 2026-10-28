@@ -1,0 +1,6 @@
+/* Theme tokens and small theme-specific refinements. */
+[data-theme="dark"] .method-note { border-color: var(--line); }
+[data-theme="dark"] .dropzone { border-color: #496b59; }
+[data-theme="dark"] .ledger tbody tr:hover { background: #21392d; }
+[data-theme="dark"] .metric { background: #141d18; }
+[data-theme="dark"] .modal-backdrop { background: rgba(0,0,0,.72); }
