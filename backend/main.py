@@ -249,5 +249,7 @@ SAMPLE_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "sample_data")
 if os.path.isdir(SAMPLE_DATA_DIR):
     app.mount("/sample_data", StaticFiles(directory=SAMPLE_DATA_DIR), name="sample_data")
 
-if os.path.isdir(FRONTEND_DIR):
-    app.mount("/app", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+if not os.path.isdir(FRONTEND_DIR):
+    raise RuntimeError(f"Frontend directory not found: {FRONTEND_DIR}")
+
+app.mount("/app", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
