@@ -1,7 +1,10 @@
 const API = "/api";
 let currentRiskFilter = "";
 let allInvoices = [];
-let donutChart, trendChart;
+let donutChart, trendChart, complianceChart, exposureChart, vendorChart, taxMixChart, dateRiskChart, reasonChart;
+let currentPage = 1;
+const PAGE_SIZE = 8;
+let vendorRows = [];
 
 // ---------- utils ----------
 function fmtMoney(n) {
@@ -29,63 +32,92 @@ async function refreshAll() {
   await Promise.all([loadSummary(), loadInvoices()]);
 }
 
+function animateNumeric(el, target, options = {}) {
+  if (!el) return;
+  const prefix = options.prefix || "", suffix = options.suffix || "";
+  const decimals = options.decimals ?? 0;
+  const from = Number(el.dataset.numericValue ?? 0) || 0;
+  const to = Number(target) || 0;
+  el.dataset.numericValue = String(to);
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    el.textContent = `${prefix}${to.toLocaleString("en-IN", {minimumFractionDigits:decimals, maximumFractionDigits:decimals})}${suffix}`;
+    return;
+  }
+  const started = performance.now(), duration = 520;
+  const step = now => {
+    const p = Math.min(1, (now - started) / duration), eased = 1 - Math.pow(1-p, 3);
+    const value = from + (to - from) * eased;
+    el.textContent = `${prefix}${value.toLocaleString("en-IN", {minimumFractionDigits:decimals, maximumFractionDigits:decimals})}${suffix}`;
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 async function loadSummary() {
   try {
     const res = await fetch(`${API}/dashboard/summary`);
+    if (!res.ok) throw new Error(`Dashboard request failed (${res.status})`);
     const s = await res.json();
-    document.getElementById("statTotal").textContent = s.total_invoices;
-    document.getElementById("statTotalSub").textContent =
-      s.total_invoices ? `${fmtMoney(s.total_taxable_value)} total taxable value` : "—";
-    document.getElementById("statAvg").textContent = s.avg_fraud_score;
-    document.getElementById("statHigh").textContent = s.by_risk_category.High || 0;
-    document.getElementById("statHighSub").textContent = `${fmtMoney(s.total_high_risk_amount)} flagged`;
-    document.getElementById("statFail").textContent = s.failed_validation_count;
-
-    document.getElementById("legLow").textContent = s.by_risk_category.Low || 0;
-    document.getElementById("legMed").textContent = s.by_risk_category.Medium || 0;
-    document.getElementById("legHigh").textContent = s.by_risk_category.High || 0;
-
-    renderDonut(s.by_risk_category);
-    renderTrend(s.trend);
+    const risk = s.by_risk_category || {};
+    animateNumeric(document.getElementById("statTotal"), s.total_invoices || 0);
+    document.getElementById("statTotalSub").textContent = s.total_invoices ? `${fmtMoney(s.total_taxable_value)} total taxable value` : "No invoices yet";
+    animateNumeric(document.getElementById("statAvg"), s.avg_fraud_score || 0, {decimals:1});
+    animateNumeric(document.getElementById("statHigh"), risk.High || 0);
+    document.getElementById("statHighSub").textContent = `${fmtMoney(s.total_high_risk_amount)} flagged for review`;
+    animateNumeric(document.getElementById("statFail"), s.failed_validation_count || 0);
+    document.getElementById("legLow").textContent = risk.Low || 0;
+    document.getElementById("legMed").textContent = risk.Medium || 0;
+    document.getElementById("legHigh").textContent = risk.High || 0;
+    renderDonut(risk);
+    renderTrend(Array.isArray(s.trend) ? s.trend : []);
   } catch (e) {
-    console.error(e);
+    console.error("Could not load dashboard summary:", e);
+    showToast("Dashboard totals could not load. Check that the backend is running.", true);
   }
 }
 
 async function loadInvoices() {
   try {
-    const url = currentRiskFilter ? `${API}/invoices?risk=${currentRiskFilter}` : `${API}/invoices`;
-    const res = await fetch(url);
+    const res = await fetch(`${API}/invoices?limit=5000`);
     allInvoices = await res.json();
-    renderLedger(allInvoices);
+    currentPage = 1;
+    renderLedger();
+    renderInsightReports();
   } catch (e) {
     console.error(e);
   }
 }
 
 // ---------- rendering ----------
-function renderLedger(rows) {
-  const body = document.getElementById("ledgerBody");
-  const empty = document.getElementById("emptyState");
+function getVisibleInvoices() {
+  const query = (document.getElementById("invoiceSearch")?.value || "").trim().toLowerCase();
+  const sort = document.getElementById("invoiceSort")?.value || "recent";
+  const rows = allInvoices.filter(r => {
+    const riskOK = !currentRiskFilter || r.risk_category === currentRiskFilter;
+    const haystack = [r.invoice_no, r.vendor_name, r.vendor_gstin, r.buyer_gstin, r.invoice_date].join(" ").toLowerCase();
+    return riskOK && (!query || haystack.includes(query));
+  });
+  rows.sort((a,b) => sort === "score" ? (b.fraud_score||0)-(a.fraud_score||0) : sort === "amount" ? (b.total_amount||0)-(a.total_amount||0) : sort === "date" ? String(b.invoice_date||"").localeCompare(String(a.invoice_date||"")) : (b.id||0)-(a.id||0));
+  return rows;
+}
+function renderLedger() {
+  const body = document.getElementById("ledgerBody"), empty = document.getElementById("emptyState");
+  const rows = getVisibleInvoices(), totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  currentPage = Math.min(currentPage, totalPages);
+  const start = (currentPage - 1) * PAGE_SIZE, pageRows = rows.slice(start, start + PAGE_SIZE);
   body.innerHTML = "";
-  if (!rows.length) {
-    empty.style.display = "block";
-    return;
-  }
-  empty.style.display = "none";
-  for (const r of rows) {
+  document.getElementById("resultCount").textContent = `${rows.length} record${rows.length === 1 ? "" : "s"}`;
+  document.getElementById("pageInfo").textContent = rows.length ? `Showing ${start + 1}–${Math.min(start + PAGE_SIZE, rows.length)} of ${rows.length}` : "Showing 0–0";
+  document.getElementById("prevPage").disabled = currentPage <= 1;
+  document.getElementById("nextPage").disabled = currentPage >= totalPages;
+  empty.style.display = rows.length ? "none" : "block";
+  for (const r of pageRows) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td class="inv-no">${r.invoice_no || "—"}</td>
-      <td class="gstin-cell">${r.vendor_gstin || "—"}</td>
-      <td>${r.invoice_date || "—"}</td>
-      <td class="amount-cell">${fmtMoney(r.total_amount)}</td>
-      <td><span class="stamp ${riskClass(r.risk_category)}">${r.risk_category}</span></td>
-    `;
-    tr.addEventListener("click", () => openModal(r));
-    body.appendChild(tr);
+    tr.innerHTML = `<td><div class="inv-no">${escapeHTML(r.invoice_no || "—")}</div><div class="table-sub">${escapeHTML(r.vendor_name || "Invoice record")}</div></td><td class="gstin-cell">${escapeHTML(r.vendor_gstin || "—")}</td><td>${escapeHTML(r.invoice_date || "—")}</td><td class="amount-cell">${fmtMoney(r.total_amount)}</td><td><span class="stamp ${riskClass(r.risk_category)}">${escapeHTML(r.risk_category || "Unknown")}</span></td>`;
+    tr.addEventListener("click", () => openModal(r)); body.appendChild(tr);
   }
 }
+function escapeHTML(value) { return String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 function renderDonut(byRisk) {
   const ctx = document.getElementById("riskDonut");
@@ -95,7 +127,7 @@ function renderDonut(byRisk) {
     type: "doughnut",
     data: {
       labels: ["Low", "Medium", "High"],
-      datasets: [{ data, backgroundColor: ["#2f6e52", "#b3811f", "#ad3628"], borderWidth: 0 }],
+      datasets: [{ data, backgroundColor: ["#187a54", "#b7791f", "#b93838"], borderWidth: 0 }],
     },
     options: {
       cutout: "68%",
@@ -114,14 +146,14 @@ function renderTrend(trend) {
     data: {
       labels,
       datasets: [{
-        data, borderColor: "#1f3a5f", backgroundColor: "rgba(31,58,95,0.08)",
+        data, borderColor: "#236b57", backgroundColor: "rgba(35,107,87,0.10)",
         fill: true, tension: 0.3, pointRadius: 2, borderWidth: 2,
       }],
     },
     options: {
       plugins: { legend: { display: false } },
       scales: {
-        y: { min: 0, max: 100, grid: { color: "#eceef2" }, ticks: { font: { size: 10 } } },
+        y: { min: 0, max: 100, grid: { color: "rgba(130,150,138,.20)" }, ticks: { font: { size: 10 } } },
         x: { display: false },
       },
     },
@@ -133,9 +165,7 @@ document.getElementById("filterPills").addEventListener("click", (e) => {
   const btn = e.target.closest(".pill");
   if (!btn) return;
   document.querySelectorAll(".pill").forEach((p) => p.classList.remove("active"));
-  btn.classList.add("active");
-  currentRiskFilter = btn.dataset.risk;
-  loadInvoices();
+  btn.classList.add("active"); currentRiskFilter = btn.dataset.risk; currentPage = 1; renderLedger();
 });
 
 // ---------- upload ----------
@@ -198,14 +228,21 @@ document.getElementById("clearBtn").addEventListener("click", async () => {
 });
 
 document.getElementById("sampleBtn").addEventListener("click", async () => {
+  const btn = document.getElementById("sampleBtn");
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Loading demo…";
   try {
-    const res = await fetch("/sample_data/sample_invoices.csv");
-    if (!res.ok) throw new Error("Sample file not found — see README for its location.");
-    const blob = await res.blob();
-    const file = new File([blob], "sample_invoices.csv", { type: "text/csv" });
-    uploadFile(file);
+    const res = await fetch(`${API}/demo/load`, { method: "POST" });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(result.detail || "Could not load the demo batch.");
+    showToast(`Loaded ${result.count} demo invoice${result.count === 1 ? "" : "s"}.`);
+    await refreshAll();
   } catch (e) {
-    showToast(e.message, true);
+    showToast(e.message || "Could not load the demo batch.", true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
   }
 });
 
@@ -251,17 +288,124 @@ document.getElementById("modalBackdrop").addEventListener("click", (e) => {
 });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
 
+// ---------- searchable ledger, exports and actionable reports ----------
+document.getElementById("invoiceSearch").addEventListener("input", () => { currentPage = 1; renderLedger(); });
+document.getElementById("invoiceSort").addEventListener("change", () => { currentPage = 1; renderLedger(); });
+document.getElementById("prevPage").addEventListener("click", () => { currentPage = Math.max(1, currentPage - 1); renderLedger(); });
+document.getElementById("nextPage").addEventListener("click", () => { currentPage += 1; renderLedger(); });
+document.getElementById("exportBtn").addEventListener("click", () => {
+  const rows = getVisibleInvoices(); if (!rows.length) { showToast("No invoices to export for these filters.", true); return; }
+  const cols = ["invoice_no","invoice_date","vendor_name","vendor_gstin","buyer_gstin","taxable_value","cgst","sgst","igst","total_amount","fraud_score","risk_category","validation_passed","reasons"];
+  const csvCell = v => `"${String(Array.isArray(v) ? v.join("; ") : v ?? "").replace(/"/g, '""')}"`;
+  const csv = [cols.join(","), ...rows.map(r => cols.map(c => csvCell(r[c])).join(","))].join("\r\n");
+  const url = URL.createObjectURL(new Blob(["\ufeff" + csv], {type:"text/csv;charset=utf-8;"})); const a = document.createElement("a"); a.href = url; a.download = "ledger-ai-audit-export.csv"; a.click(); URL.revokeObjectURL(url); showToast(`Exported ${rows.length} invoice records.`);
+});
+
+document.getElementById("exportReportsBtn")?.addEventListener("click", () => {
+  if (!allInvoices.length) { showToast("Upload or load invoices before exporting reports.", true); return; }
+  const cell = value => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const out = [["Report","Metric","Value","Notes"]];
+  const sum = key => allInvoices.reduce((n, r) => n + Number(r[key] || 0), 0);
+  const riskCounts = {Low:0,Medium:0,High:0};
+  allInvoices.forEach(r => { riskCounts[r.risk_category] = (riskCounts[r.risk_category] || 0) + 1; });
+  const failed = allInvoices.filter(r => r.validation_passed === false).length;
+  out.push(["Portfolio","Invoices audited",allInvoices.length,"Loaded invoice ledger"]);
+  out.push(["Portfolio","Total invoice value",sum("total_amount"),"Sum of recorded invoice totals"]);
+  out.push(["Portfolio","Total taxable value",sum("taxable_value"),"Sum of recorded taxable values"]);
+  out.push(["Portfolio","Average risk score",(sum("fraud_score")/allInvoices.length).toFixed(2),"0–100 screening score"]);
+  out.push(["Portfolio","Rule failure rate",`${(failed/allInvoices.length*100).toFixed(2)}%`,`${failed} invoices failed at least one rule`]);
+  ["Low","Medium","High"].forEach(risk=>out.push(["Risk distribution",`${risk} risk invoices`,riskCounts[risk]||0,"Risk category is a screening classification"]));
+  ["cgst","sgst","igst"].forEach(k=>out.push(["Tax composition",k.toUpperCase(),sum(k),"Recorded tax fields; verify against source documents"]));
+  (vendorRows||[]).forEach(v=>out.push(["Vendor ranking",v.name||v.gstin,`Average score ${v.avg_score}; invoices ${v.invoices}; high-risk ${v.high}; value ${v.amount}`,"Not a legal finding of fraud"]));
+  const reasons = {};
+  allInvoices.forEach(r=>(Array.isArray(r.reasons)?r.reasons:[]).forEach(reason=>{reasons[reason]=(reasons[reason]||0)+1;}));
+  Object.entries(reasons).sort((a,b)=>b[1]-a[1]).forEach(([reason,count])=>out.push(["Risk explanations",reason,count,"Occurrences in model-generated explanations"]));
+  const csv = out.map(row=>row.map(cell).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8;"}));
+  const a=document.createElement("a"); a.href=url; a.download="ledger-ai-report-pack.csv"; a.click(); URL.revokeObjectURL(url);
+  showToast("Report pack exported.");
+});
+
+function renderInsightReports() {
+  const rows = allInvoices || [];
+  const riskOrder = ["Low", "Medium", "High"], riskColors = ["#10b981", "#f59e0b", "#f43f5e"];
+  const totalAmount = rows.reduce((sum, x) => sum + Number(x.total_amount || 0), 0);
+  const amounts = riskOrder.map(r => rows.filter(x => x.risk_category === r).reduce((sum,x) => sum + Number(x.total_amount || 0), 0));
+  const highRows = rows.filter(x => x.risk_category === "High");
+  const failedRows = rows.filter(x => x.validation_passed === false);
+  const portfolioEl = document.getElementById("rollupPortfolio");
+  if (portfolioEl) portfolioEl.textContent = fmtMoney(totalAmount);
+  const exposureEl = document.getElementById("rollupExposure");
+  if (exposureEl) exposureEl.textContent = fmtMoney(amounts[2]);
+  const exposureSub = document.getElementById("rollupExposureSub");
+  if (exposureSub) exposureSub.textContent = `${highRows.length} high-risk invoice(s) · screening signal only`;
+  const failureRate = rows.length ? (failedRows.length / rows.length * 100) : 0;
+  const failureRateEl = document.getElementById("rollupFailureRate");
+  if (failureRateEl) failureRateEl.textContent = `${failureRate.toFixed(1)}%`;
+  const failureSub = document.getElementById("rollupFailureSub");
+  if (failureSub) failureSub.textContent = `${failedRows.length} of ${rows.length} invoices failed at least one rule`;
+
+  const vendorAmounts = {};
+  rows.forEach(inv => {
+    const key = inv.vendor_name || inv.vendor_gstin || "Unknown vendor";
+    vendorAmounts[key] = (vendorAmounts[key] || 0) + Number(inv.total_amount || 0);
+  });
+  const topVendor = Object.entries(vendorAmounts).sort((a,b)=>b[1]-a[1])[0];
+  const topVendorEl = document.getElementById("rollupTopVendor");
+  if (topVendorEl) topVendorEl.textContent = topVendor ? (topVendor[0].length > 18 ? topVendor[0].slice(0,17)+"…" : topVendor[0]) : "—";
+  const topVendorSub = document.getElementById("rollupTopVendorSub");
+  if (topVendorSub) topVendorSub.textContent = topVendor && totalAmount ? `${(topVendor[1]/totalAmount*100).toFixed(1)}% of recorded invoice value` : "Largest share of invoice value";
+
+  const exposureInsight = document.getElementById("exposureInsight");
+  if (exposureInsight) exposureInsight.textContent = rows.length ? `${fmtMoney(amounts[2])} across ${highRows.length} high-risk invoice(s). Risk scores prioritize review; they do not establish fraud.` : "Upload a batch to calculate exposure by risk category.";
+  if (exposureChart) exposureChart.destroy();
+  if (document.getElementById("exposureChart")) exposureChart = new Chart(document.getElementById("exposureChart"), {type:"bar",data:{labels:riskOrder,datasets:[{label:"Invoice amount",data:amounts,backgroundColor:riskColors,borderRadius:8,maxBarThickness:46}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmtMoney(c.raw)}}},scales:{y:{beginAtZero:true,ticks:{callback:v=>v>=100000?`₹${(v/100000).toFixed(1)}L`:v>=1000?`₹${(v/1000).toFixed(0)}k`:`₹${v}`},grid:{color:"rgba(148,163,184,.15)"}},x:{grid:{display:false}}}}});
+
+  const failures = {};
+  rows.forEach(inv => ((inv.validation_report && inv.validation_report.checks) || []).forEach(c => { if (!c.passed) failures[c.rule || c.name || "Other check"] = (failures[c.rule || c.name || "Other check"] || 0) + 1; }));
+  const failureRows = Object.entries(failures).sort((a,b)=>b[1]-a[1]).slice(0,7);
+  const ci = document.getElementById("complianceInsight"); if (ci) ci.textContent = failureRows.length ? `Most frequent exception: ${failureRows[0][0]} (${failureRows[0][1]} failed check(s)).` : (rows.length ? "No failed rule checks recorded in the loaded ledger." : "Upload invoices to reveal the most common compliance exceptions.");
+  if (complianceChart) complianceChart.destroy();
+  if (document.getElementById("complianceChart")) complianceChart = new Chart(document.getElementById("complianceChart"), {type:"bar",data:{labels:failureRows.length?failureRows.map(x=>x[0]):[rows.length?"No failures":"No data"],datasets:[{data:failureRows.length?failureRows.map(x=>x[1]):[0],backgroundColor:"#818cf8",borderRadius:6,maxBarThickness:24}]},options:{indexAxis:"y",plugins:{legend:{display:false},tooltip:{enabled:!!failureRows.length}},scales:{x:{beginAtZero:true,ticks:{precision:0},grid:{color:"rgba(148,163,184,.15)"}},y:{grid:{display:false}}}}});
+
+  const topVendors = (vendorRows || []).slice(0,6);
+  if (vendorChart) vendorChart.destroy();
+  if (document.getElementById("vendorChart")) vendorChart = new Chart(document.getElementById("vendorChart"), {type:"bar",data:{labels:topVendors.length?topVendors.map(v=>{const n=v.name || v.gstin || "Unknown";return n.length>18?n.slice(0,17)+"…":n;}):["No vendor data"],datasets:[{data:topVendors.length?topVendors.map(v=>Number(v.avg_score||0)):[0],backgroundColor:topVendors.map(v=>Number(v.avg_score)>=70?"#f43f5e":Number(v.avg_score)>=40?"#f59e0b":"#10b981"),borderRadius:6,maxBarThickness:26}]},options:{indexAxis:"y",plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`Average score: ${c.raw}/100`}}},scales:{x:{min:0,max:100,grid:{color:"rgba(148,163,184,.15)"}},y:{grid:{display:false}}}}});
+
+  const queue = rows.filter(x=>Number(x.fraud_score)>=40 || x.validation_passed===false).sort((a,b)=>(Number(b.fraud_score||0)+(b.validation_passed===false?20:0))-(Number(a.fraud_score||0)+(a.validation_passed===false?20:0))).slice(0,5);
+  const q = document.getElementById("priorityQueue"); if (q) q.innerHTML = queue.length ? queue.map((inv,i)=>`<button class="priority-item" data-id="${Number(inv.id)}"><span class="priority-rank">${i+1}</span><span class="priority-main"><b>${escapeHTML(inv.invoice_no || "Untitled invoice")}</b><small>${escapeHTML(inv.vendor_name || inv.vendor_gstin || "Unknown vendor")} · ${inv.validation_passed===false?"Compliance failed":"Risk signal detected"}</small></span><span class="stamp ${riskClass(inv.risk_category)}">${Math.round(inv.fraud_score||0)}</span></button>`).join("") : `<div class="empty-report">${rows.length ? "No invoices currently meet the priority threshold. Continue routine monitoring." : "Upload a batch to generate a prioritized review list."}</div>`;
+  if (q) q.querySelectorAll(".priority-item").forEach(btn=>btn.addEventListener("click",()=>{const inv=rows.find(x=>Number(x.id)===Number(btn.dataset.id));if(inv)openModal(inv);}));
+
+  const taxTotals = ["cgst","sgst","igst"].map(k => rows.reduce((sum, inv)=>sum+Number(inv[k]||0),0));
+  const taxTotal = taxTotals.reduce((a,b)=>a+b,0);
+  if (taxMixChart) taxMixChart.destroy();
+  if (document.getElementById("taxMixChart")) taxMixChart = new Chart(document.getElementById("taxMixChart"), {type:"doughnut",data:{labels:["CGST","SGST","IGST"],datasets:[{data:taxTotals,backgroundColor:["#6366f1","#14b8a6","#f59e0b"],borderWidth:0}]},options:{cutout:"62%",plugins:{legend:{position:"bottom"},tooltip:{callbacks:{label:c=>`${c.label}: ${fmtMoney(c.raw)}`}}}}});
+  const taxMixInsight = document.getElementById("taxMixInsight"); if(taxMixInsight) taxMixInsight.textContent = rows.length ? `Recorded tax total: ${fmtMoney(taxTotal)}. Values reflect parsed or mapped fields; verify against source invoices.` : "Tax totals update from the ledger.";
+
+  const averageByRisk = riskOrder.map(r=>{const group=rows.filter(x=>x.risk_category===r);return group.length?group.reduce((sum,x)=>sum+Number(x.total_amount||0),0)/group.length:0;});
+  if(dateRiskChart) dateRiskChart.destroy();
+  if(document.getElementById("dateRiskChart")) dateRiskChart = new Chart(document.getElementById("dateRiskChart"), {type:"bar",data:{labels:riskOrder,datasets:[{label:"Average invoice value",data:averageByRisk,backgroundColor:riskColors,borderRadius:8,maxBarThickness:42}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmtMoney(c.raw)}}},scales:{y:{beginAtZero:true,ticks:{callback:v=>v>=100000?`₹${(v/100000).toFixed(1)}L`:v>=1000?`₹${(v/1000).toFixed(0)}k`:`₹${v}`},grid:{color:"rgba(148,163,184,.15)"}},x:{grid:{display:false}}}}});
+  const valueRiskInsight = document.getElementById("valueRiskInsight"); if(valueRiskInsight) valueRiskInsight.textContent = rows.length ? `Average recorded invoice value: Low ${fmtMoney(averageByRisk[0])} · Medium ${fmtMoney(averageByRisk[1])} · High ${fmtMoney(averageByRisk[2])}.` : "Average invoice values update from the ledger.";
+
+  const reasonCounts = {};
+  rows.forEach(inv => (Array.isArray(inv.reasons)?inv.reasons:[]).forEach(reason=>{const label=String(reason||"Other signal").trim().split(/[.:;]/)[0].slice(0,64)||"Other signal";reasonCounts[label]=(reasonCounts[label]||0)+1;}));
+  const reasonRows=Object.entries(reasonCounts).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  if(reasonChart) reasonChart.destroy();
+  if(document.getElementById("reasonChart")) reasonChart = new Chart(document.getElementById("reasonChart"), {type:"bar",data:{labels:reasonRows.length?reasonRows.map(x=>x[0]):[rows.length?"No reasons returned":"No data"],datasets:[{data:reasonRows.length?reasonRows.map(x=>x[1]):[0],backgroundColor:"#0ea5e9",borderRadius:6,maxBarThickness:24}]},options:{indexAxis:"y",plugins:{legend:{display:false},tooltip:{enabled:!!reasonRows.length}},scales:{x:{beginAtZero:true,ticks:{precision:0},grid:{color:"rgba(148,163,184,.15)"}},y:{grid:{display:false}}}}});
+  const reasonInsight=document.getElementById("reasonInsight"); if(reasonInsight) reasonInsight.textContent=reasonRows.length?`Most common explanation: ${reasonRows[0][0]} (${reasonRows[0][1]} occurrence(s)). These are model/rule signals for human review.`:(rows.length?"No reason strings were returned for these assessments.":"Reason frequencies update from invoice assessments.");
+}
+
 // ---------- init ----------
 refreshAll();
 
 // ---------- intelligence panels ----------
 let typChart, netAnim;
-const riskColor = (s) => (s >= 70 ? "#ad3628" : s >= 40 ? "#b3811f" : "#2f6e52");
+const riskColor = (s) => (s >= 70 ? "#b93838" : s >= 40 ? "#b7791f" : "#187a54");
 
 async function loadIntel() {
   try {
-    const [m, v, n] = await Promise.all(["model/metrics", "vendors/risk", "network"].map((p) => fetch(`${API}/${p}`).then((r) => r.json())));
-    renderMetrics(m); renderVendors(v); renderNetwork(n);
+    const [m, v] = await Promise.all(["model/metrics", "vendors/risk"].map((p) => fetch(`${API}/${p}`).then((r) => r.json())));
+    vendorRows = v; renderMetrics(m); renderVendors(v); renderInsightReports();
   } catch (e) { console.error(e); }
 }
 
@@ -280,9 +424,9 @@ function renderMetrics(m) {
   if (typChart) typChart.destroy();
   typChart = new Chart(document.getElementById("typChart"), {
     type: "bar",
-    data: { labels: labels.map((l) => l.replace(/_/g, " ")), datasets: [{ data, backgroundColor: "#1f3a5f", borderRadius: 4 }] },
+    data: { labels: labels.map((l) => l.replace(/_/g, " ")), datasets: [{ data, backgroundColor: "#236b57", borderRadius: 4 }] },
     options: { indexAxis: "y", plugins: { legend: { display: false }, title: { display: true, text: "ML-only recall by fraud typology (%)", font: { size: 11 } } },
-      scales: { x: { min: 0, max: 100, grid: { color: "#eceef2" } }, y: { grid: { display: false } } } },
+      scales: { x: { min: 0, max: 100, grid: { color: "rgba(130,150,138,.20)" } }, y: { grid: { display: false } } } },
   });
 }
 
@@ -324,24 +468,14 @@ loadIntel();
   document.getElementById("themeBtn").onclick = () => {
     root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
     localStorage.setItem("theme", root.dataset.theme);
-    Chart.defaults.color = root.dataset.theme === "dark" ? "#8d9ab8" : "#5b6472";
+    Chart.defaults.color = root.dataset.theme === "dark" ? "#c4b5fd" : "#6b7280";
   };
-  if (root.dataset.theme === "dark") Chart.defaults.color = "#8d9ab8";
-
-  // animated count-up whenever a stat value changes
-  document.querySelectorAll(".stat-value").forEach((el) => {
-    let busy = false;
-    new MutationObserver(() => {
-      if (busy) return; const to = parseFloat(el.textContent); if (isNaN(to)) return;
-      busy = true; const t0 = performance.now(), dec = String(el.textContent).includes(".") ? 1 : 0;
-      (function f(t) { const p = Math.min((t - t0) / 700, 1); el.textContent = (to * (1 - Math.pow(1 - p, 3))).toFixed(dec);
-        if (p < 1) requestAnimationFrame(f); else { el.textContent = to.toFixed(dec); busy = false; } })(t0);
-    }).observe(el, { childList: true });
-  });
+  if (root.dataset.theme === "dark") Chart.defaults.color = "#c4b5fd";
 
   // circular risk gauge inside the invoice modal
   const _open = openModal;
   openModal = function (inv) {
+    document.querySelectorAll(".gauge").forEach(el => el.remove());
     _open(inv);
     const s = Math.max(0, Math.min(100, inv.fraud_score || 0)), c = riskColor(s), R = 34, C = 2 * Math.PI * R;
     const g = document.createElement("div"); g.className = "gauge";

@@ -92,6 +92,32 @@ async def upload_invoice(file: UploadFile = File(...)):
     return {"count": len(results), "invoices": results}
 
 
+@app.post("/api/demo/load")
+def load_demo_batch():
+    """Load the bundled demo invoice CSV directly on the server.
+
+    This avoids relying on a browser fetch to the static sample-data URL,
+    which can fail when the app is hosted behind a service/root-path setup.
+    """
+    sample_path = os.path.join(os.path.dirname(__file__), "..", "sample_data", "sample_invoices.csv")
+    if not os.path.isfile(sample_path):
+        raise HTTPException(status_code=404, detail="Demo invoice CSV is missing from the deployment.")
+
+    try:
+        invoices_raw = parse_invoice_file(sample_path, "sample_invoices.csv")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not read demo invoices: {e}")
+    if not invoices_raw:
+        raise HTTPException(status_code=400, detail="The demo invoice file contains no rows.")
+
+    session = get_session()
+    try:
+        results = [_process_single_invoice(row, "sample_invoices.csv", session) for row in invoices_raw]
+    finally:
+        session.close()
+    return {"count": len(results), "invoices": results, "demo": True}
+
+
 @app.get("/api/invoices")
 def list_invoices(risk: str = None, limit: int = 200):
     session = get_session()
@@ -249,7 +275,5 @@ SAMPLE_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "sample_data")
 if os.path.isdir(SAMPLE_DATA_DIR):
     app.mount("/sample_data", StaticFiles(directory=SAMPLE_DATA_DIR), name="sample_data")
 
-if not os.path.isdir(FRONTEND_DIR):
-    raise RuntimeError(f"Frontend directory not found: {FRONTEND_DIR}")
-
-app.mount("/app", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+if os.path.isdir(FRONTEND_DIR):
+    app.mount("/app", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

@@ -7,12 +7,12 @@ GST-fraud typologies. Writes models/*.joblib and models/metrics.json.
   python train_model.py
 """
 import os, sys, json, copy, random
-from datetime import datetime
+from datetime import datetime, timezone
 import numpy as np, pandas as pd, joblib
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score, average_precision_score, confusion_matrix
-from data_pipeline import find_file, build_invoices
+from data_pipeline import find_file, download, build_invoices
 from app.gst_validator import run_full_validation
 from app.fraud_model import engineer_features, FEATURE_NAMES
 
@@ -46,9 +46,21 @@ def inject(inv):
 def main():
     path = find_file()
     if not path:
-        sys.exit("No real dataset found in ../data. Run `python data_pipeline.py` (needs internet) "
-                 "or place the UCI Online Retail .xlsx/.csv in the data/ folder.")
-    invs = build_invoices(path, limit=30000)
+        print("No UCI dataset found in ../data; downloading the official UCI Online Retail archive...")
+        try:
+            path = download()
+        except Exception as exc:
+            sys.exit(f"Could not download the UCI dataset: {exc}\nCheck your internet connection, then run `python data_pipeline.py`.")
+
+    print(f"Reading real retail transaction data from: {path}")
+    try:
+        invs = build_invoices(path, limit=30000)
+    except Exception as exc:
+        sys.exit(f"Could not process the UCI dataset: {exc}")
+    if len(invs) < 100:
+        sys.exit(f"Only {len(invs)} usable invoices were found; check that the UCI Online Retail dataset is in ../data.")
+    print(f"Prepared {len(invs):,} invoice-shaped records from real UCI transactions.")
+    print("Note: GSTINs, tax slabs and GST amounts are synthetic mappings; the source is not a GST/fraud-labelled dataset.")
     random.shuffle(invs)
     cut = int(len(invs) * .7)
     train_inv, test_inv = invs[:cut], invs[cut:]
@@ -72,7 +84,7 @@ def main():
     tn, fp, fn, tp = confusion_matrix(y, pred).ravel()
     per = {k: round(float(pred[(np.array(kinds) == k)].mean()), 3) for k in sorted(set(kinds) - {"clean"})}
     metrics = dict(
-        source="UCI Online Retail (real invoices) -> GST schema", trained_at=datetime.utcnow().isoformat(),
+        source="UCI Online Retail transactions mapped to GST-like records; fraud typologies injected only in held-out evaluation", dataset_file=os.path.basename(path), trained_at=datetime.now(timezone.utc).isoformat(),
         train_invoices=len(train_inv), test_invoices=len(y), injected_frauds=int(y.sum()),
         roc_auc=round(roc_auc_score(y, s), 4), pr_auc=round(average_precision_score(y, s), 4),
         ml_only=dict(precision=round(tp / max(tp + fp, 1), 3), recall=round(tp / max(tp + fn, 1), 3),
@@ -82,7 +94,9 @@ def main():
         recall_by_typology_ml_only=per, features=FEATURE_NAMES)
     joblib.dump(model, os.path.join(MODEL_DIR, "isolation_forest.joblib"))
     joblib.dump(scaler, os.path.join(MODEL_DIR, "scaler.joblib"))
-    json.dump(metrics, open(os.path.join(MODEL_DIR, "metrics.json"), "w"), indent=2)
+    with open(os.path.join(MODEL_DIR, "metrics.json"), "w", encoding="utf-8") as metric_file:
+        json.dump(metrics, metric_file, indent=2)
+    print("\nTraining complete. Saved model, scaler and metrics to:", MODEL_DIR)
     print(json.dumps(metrics, indent=2))
 
 

@@ -1,130 +1,110 @@
-# Ledger·AI — GST Invoice Fraud Detection System for MSME Compliance
+# Ledger AI — GST Invoice Risk & Compliance Workbench
 
-Built from the S7 mini-project proposal ("Automated GST invoice fraud
-detection system using anomaly detection for MSME compliance", 2026IN073).
+A student mini-project combining GST-style rule checks with an Isolation Forest anomaly detector. The browser dashboard includes an invoice ledger, risk distribution, audit priority queue, GST rule-failure analysis, amount-at-risk reporting, vendor risk ranking, and invoice-level PDF audit reports.
 
-Hybrid engine: **rule-based GST compliance validation** + **Isolation
-Forest anomaly detection**, wrapped in a FastAPI backend and a browser
-dashboard.
+## Dataset and scientific limitations
 
-## What it does
+This project uses the **UCI Machine Learning Repository — Online Retail** dataset as the real-world transaction source. The source contains retail transaction lines (invoice number/date, customer identifier, quantity and unit price); it is **not** a GST invoice dataset and does **not** contain confirmed GST fraud labels.
 
-1. **Ingests** invoices as PDF, PNG/JPG, XLSX, or CSV (Excel/CSV can hold
-   a batch of many invoices in one file).
-2. **Extracts** fields — OCR (Tesseract) for scanned PDFs/images via
-   `pdfplumber` + `pytesseract`; direct column mapping for spreadsheets.
-3. **Validates** each invoice against GST compliance rules:
-   - GSTIN format & state-code check (both vendor and buyer)
-   - Tax-calculation consistency (`taxable value + CGST + SGST + IGST == total`)
-   - CGST/SGST vs IGST mutual-exclusivity check
-   - Mandatory field presence
-   - Duplicate invoice detection (same invoice number + vendor GSTIN)
-   - Invoice date sanity check
-4. **Scores fraud risk** with a pre-trained `scikit-learn` Isolation
-   Forest over engineered features (tax mismatch size, GST rate
-   deviation, round-amount flags, rule-violation flags, etc.), producing
-   a 0–100 risk score and a Low / Medium / High category, plus
-   human-readable reasons.
-5. **Dashboards** everything — ledger table, risk distribution donut,
-   fraud-score trend — and generates a one-page **PDF audit report**
-   per invoice.
+The pipeline maps real transaction patterns into a GST-like invoice schema for a student experiment. The GBP-to-INR conversion is a fixed illustrative rate, and GSTIN-shaped identifiers, buyer GSTIN, tax slabs and GST amounts are synthetic. Fraud typologies are injected only into a held-out evaluation set so the project can demonstrate evaluation metrics. Therefore, displayed metrics measure detection of the planted test anomalies—not real-world GST fraud performance. Do not describe these results as validated GST fraud accuracy.
 
-## Project layout
+Dataset source: UCI Online Retail, https://archive.ics.uci.edu/dataset/352/online+retail (CC BY 4.0). The raw dataset is downloaded on first training and is not bundled in this ZIP.
 
-```
-backend/
-  main.py              FastAPI app (all /api routes, serves the frontend)
-  train_model.py        Generates synthetic invoices & trains the Isolation Forest
-  app/
-    ocr_parser.py        PDF/image OCR + Excel/CSV parsing
-    gst_validator.py      Rule-based GST compliance checks
-    fraud_model.py         Feature engineering + Isolation Forest scoring
-    database.py             SQLite (SQLAlchemy) models
-    report_generator.py      PDF audit report (ReportLab)
-  requirements.txt
-frontend/
-  index.html / style.css / script.js   Vanilla JS dashboard (no build step)
-models/
-  isolation_forest.joblib, scaler.joblib   Pre-trained model (already trained — see below)
-sample_data/
-  sample_invoices.csv    10-row demo batch (includes a duplicate, a bad GSTIN,
-                          a missing field, and a tax mismatch, for demoing the engine)
+## Project structure
+
+```text
+gst_fraud_app/
+  backend/
+    main.py                  FastAPI application and API routes
+    data_pipeline.py         Downloads and maps UCI Online Retail transactions
+    train_model.py           Trains/evaluates Isolation Forest and writes metrics
+    requirements.txt
+    app/                     GST rules, feature engineering, OCR, PDF reports, SQLite
+  frontend/                  HTML, CSS and JavaScript dashboard
+  models/                    Current model/scaler; retraining overwrites these
+  sample_data/               Small intentionally imperfect demo invoices
+  data/                      Created automatically for the downloaded UCI dataset
 ```
 
-## Setup
+## Windows setup (recommended: Python 3.11 64-bit)
 
-Requires **Python 3.10+**. OCR of scanned PDFs/images additionally needs
-the **Tesseract** binary on your system (not a Python package):
+The pinned ML dependencies are intended for Python 3.11. Python 3.14 is too new for several pinned versions in this project; do not try to compile pandas locally to work around that. The easiest path after installing Python 3.11 is to double-click `TRAIN_REAL_UCI_DATA.bat` from this project folder. It creates `.venv311`, installs dependencies, downloads/checks the UCI dataset, and trains/evaluates the model. After it finishes, double-click `START_APP.bat`.
 
-```bash
-# Ubuntu/Debian
-sudo apt-get install tesseract-ocr
-# macOS
-brew install tesseract
+1. Install Python 3.11 (64-bit) from https://www.python.org/downloads/release/python-3119/.
+2. Open PowerShell in the extracted `gst_fraud_app` folder.
+3. Create and activate an isolated environment:
+
+```powershell
+py -3.11 -m venv .venv311
+.\.venv311\Scripts\Activate.ps1
+python --version
 ```
-(CSV/Excel invoices work without Tesseract at all.)
 
-```bash
+The last command should show `Python 3.11.x`.
+
+4. Install dependencies from the backend folder:
+
+```powershell
 cd backend
-python3 -m venv venv && source venv/bin/activate      # optional but recommended
-pip install -r requirements.txt
-
-# The model is already trained and committed under models/, but you can
-# regenerate it any time (e.g. after changing the feature engineering):
-python train_model.py
-
-uvicorn main:app --reload --port 8000
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-Open **http://localhost:8000** — it redirects to the dashboard. Click
-**"Try sample batch"** to see the engine flag the planted duplicate,
-invalid GSTIN, missing field, and tax mismatch in `sample_data/sample_invoices.csv`.
+5. Download and validate the real UCI dataset, then train the model (or double-click `TRAIN_REAL_UCI_DATA.bat` from the project root):
 
-## API
+```powershell
+python data_pipeline.py
+python train_model.py
+```
+
+`data_pipeline.py` downloads the official UCI archive into `gst_fraud_app/data/` if the dataset is not already present. `train_model.py` also attempts the download automatically if needed. Training can take several minutes. It writes `models/isolation_forest.joblib`, `models/scaler.joblib`, and `models/metrics.json`.
+
+6. Start the web application from the same `backend` folder:
+
+```powershell
+python -m uvicorn main:app --reload --port 8000
+```
+
+7. Open http://localhost:8000. Interactive API documentation is at http://localhost:8000/docs. To launch later without retraining, double-click `START_APP.bat` from the project root.
+
+### If `py -3.11` is not recognized
+
+Run `py -0p` to list installed Python versions. Install the Python 3.11 Windows x86-64 installer linked above, then open a new PowerShell window. Keep Python 3.14 installed if other projects use it.
+
+## Quick demo
+
+- Click **Try sample batch** to inspect known demo exceptions.
+- Upload CSV/XLSX invoice batches or individual PDF/image invoices (Tesseract is additionally required for scanned documents).
+- Click a ledger row to inspect the audit trail and download a PDF report.
+- Use risk filters, search, sorting, pagination and CSV export.
+
+The sample batch is for a quick UI demonstration; it is not the UCI training dataset. Training on UCI transactions is a separate step from uploading invoice records into the dashboard.
+
+## Main API routes
 
 | Method | Route | Purpose |
 |---|---|---|
-| POST | `/api/upload` | Upload one file (PDF/image/CSV/XLSX); returns every extracted invoice with its validation + fraud score |
-| GET | `/api/invoices?risk=High` | List stored invoices, optional risk filter |
-| GET | `/api/invoices/{id}` | Single invoice detail |
-| DELETE | `/api/invoices/{id}` | Remove an invoice |
-| GET | `/api/invoices/{id}/report` | Download the PDF audit report |
-| GET | `/api/dashboard/summary` | Aggregate stats for the dashboard |
+| POST | `/api/upload` | Process invoice PDF/image/CSV/XLSX |
+| GET | `/api/invoices` | List stored invoices, optionally filter by risk |
+| GET | `/api/invoices/{id}` | Invoice details |
+| DELETE | `/api/invoices` | Clear the local demo ledger |
+| GET | `/api/invoices/{id}/report` | Download PDF audit report |
+| GET | `/api/dashboard/summary` | Dashboard aggregates |
+| GET | `/api/model/metrics` | Training/evaluation metrics |
+| GET | `/api/vendors/risk` | Vendor risk leaderboard |
 
-Interactive API docs at `/docs` (Swagger UI, auto-generated by FastAPI).
+## Responsible interpretation
 
-## Real-data training (v2)
+A high score is a screening signal, not proof of fraud. GSTIN-shaped IDs and tax fields derived by the UCI mapping are synthetic. Use authentic GST invoices and independently confirmed outcomes for any serious performance claims. The project is an academic prototype and is not connected to GSTN or any live tax portal.
 
-```bash
-cd backend
-python data_pipeline.py     # downloads UCI Online Retail (real invoices, CC BY 4.0) into ../data
-python train_model.py       # trains on real invoice behaviour, writes models/metrics.json
-```
-No public dataset contains labelled GSTIN-level fraud (GST returns are confidential under CGST Act s.158).
-So the pipeline uses real invoice behaviour and maps it to the GST schema: fixed GBP->INR rate, GST slab per
-StockCode, GSTINs derived from CustomerID. Fraud typologies are injected only into a held-out test set to
-measure recall/false-positive rate (shown in the dashboard's *Model validation* panel). Re-train on your own
-machine: the bundled .joblib files were built with the original synthetic data.
 
-## Notes on the ML model
+## Version 4.1 UI and reporting updates
 
-`train_model.py` builds a synthetic dataset (1800 normal + 200 planted
-anomalies covering tax mismatches, invalid GSTINs, missing fields,
-duplicates, off-slab GST rates, and suspiciously round amounts), engineers
-the same 10 features used at inference time, and fits an `IsolationForest`.
-Rule violations (failed GST checks, exact duplicates) always floor the
-risk score regardless of the model's opinion, so the system never lets an
-obviously non-compliant invoice slip through as "Low risk" — the ML layer
-adds coverage for anomalies the fixed rules don't catch.
+- Fixed KPI count-up animation so it no longer observes and re-triggers its own DOM updates.
+- Added live report rollups for portfolio value, high-risk exposure, rule-failure rate, and vendor concentration.
+- Added tax composition, average invoice value by risk category, and model/rule explanation frequency charts.
+- Added an **Export report pack** CSV with portfolio totals, risk distribution, tax totals, vendor ranking, and explanation counts.
+- Increased the frontend ledger fetch limit to 5,000 records so reports cover larger demo batches.
+- Improved responsive report layouts and keyboard focus visibility.
 
-Swap in real, labeled invoice history by replacing the synthetic
-generator in `train_model.py` with your own feature-engineered dataset
-and re-running it; `fraud_model.py` doesn't need to change as long as the
-feature names stay the same.
-
-## Extending it (per the proposal's conclusion)
-
-- Real-time monitoring / streaming ingestion
-- Direct GST portal (GSTN) API integration for live GSTIN verification
-- Auditor feedback loop to retrain the Isolation Forest on confirmed fraud cases
-- Multi-tenant auth for accounting firms managing several MSME clients
+The dashboard's scores and synthetic GST mappings are decision-support demonstrations. UCI Online Retail is not a verified GST invoice dataset and does not contain confirmed GST-fraud labels; do not present these results as validated real-world fraud detection performance.
