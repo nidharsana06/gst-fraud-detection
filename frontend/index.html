@@ -94,10 +94,14 @@
       <div class="panel">
         <div class="panel-header"><h3>Portfolio risk mix</h3></div>
         <div class="panel-body">
-          <div class="donut-wrap"><canvas id="riskDonut" width="180" height="180"></canvas></div>
-          <div class="legend-row"><span class="legend-label"><span class="legend-dot" style="background:#2f6e52"></span>Low</span><span class="legend-value" id="legLow">0</span></div>
-          <div class="legend-row"><span class="legend-label"><span class="legend-dot" style="background:#b3811f"></span>Medium</span><span class="legend-value" id="legMed">0</span></div>
-          <div class="legend-row"><span class="legend-label"><span class="legend-dot" style="background:#ad3628"></span>High</span><span class="legend-value" id="legHigh">0</span></div>
+          <div class="risk-mix-layout">
+            <div class="donut-wrap"><canvas id="riskDonut" width="180" height="180" aria-label="Invoice risk distribution"></canvas></div>
+            <div class="risk-legend" aria-label="Risk category counts">
+              <div class="legend-row"><span class="legend-label"><span class="legend-dot" style="background:#2f6e52"></span>Low risk</span><span class="legend-value" id="legLow">0</span></div>
+              <div class="legend-row"><span class="legend-label"><span class="legend-dot" style="background:#b3811f"></span>Medium risk</span><span class="legend-value" id="legMed">0</span></div>
+              <div class="legend-row"><span class="legend-label"><span class="legend-dot" style="background:#ad3628"></span>High risk</span><span class="legend-value" id="legHigh">0</span></div>
+            </div>
+          </div>
         </div>
       </div>
 

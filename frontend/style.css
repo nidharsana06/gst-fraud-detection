@@ -440,3 +440,39 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline-offset
   .rollup-card { min-height: 0; }
   .detail-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+
+/* ---------- usability refinement: compact scorecards and visible risk mix ---------- */
+.stat-row { gap: 12px; margin-bottom: 18px; }
+.stat-card { min-height: 108px; padding: 15px 17px; border-radius: 15px; }
+.stat-value { margin-top: 7px; font-size: clamp(24px, 2.25vw, 30px); line-height: 1.08; }
+.stat-sub { margin-top: 6px; line-height: 1.4; }
+.main-grid { gap: 16px; }
+.main-grid > div:not(:first-child) { gap: 16px; }
+.risk-mix-layout { display: grid; grid-template-columns: minmax(112px, .95fr) minmax(110px, 1fr); align-items: center; gap: 12px; min-height: 176px; }
+.donut-wrap { width: 100%; max-width: 174px; margin: 0 auto; }
+.donut-wrap canvas { width: 100% !important; height: auto !important; aspect-ratio: 1 / 1; }
+.risk-legend { min-width: 0; }
+.risk-legend .legend-row { padding: 10px 2px; font-size: 11px; }
+.legend-label { gap: 7px; white-space: nowrap; }
+.legend-dot { width: 9px; height: 9px; flex: 0 0 auto; }
+.legend-value { font-size: 12px; }
+.panel { border-radius: 15px; }
+.panel-header { min-height: 54px; }
+.panel-header h3 { font-size: 13px; }
+.table-toolbar { align-items: center; }
+.searchbox { min-height: 40px; }
+.ledger tbody tr { transition: background .15s ease; }
+.ledger tbody tr:hover { background: color-mix(in srgb, var(--steel-soft) 55%, transparent); }
+.btn, .pill, select { cursor: pointer; }
+:focus-visible { outline: 3px solid color-mix(in srgb, var(--steel) 45%, transparent); outline-offset: 2px; }
+@media (max-width: 600px) {
+  .stat-card { min-height: 98px; padding: 13px; }
+  .risk-mix-layout { grid-template-columns: minmax(105px, .9fr) minmax(110px, 1fr); gap: 8px; min-height: 150px; }
+  .risk-legend .legend-row { padding: 8px 0; font-size: 10px; }
+}
+@media (max-width: 360px) {
+  .risk-mix-layout { grid-template-columns: 1fr; }
+  .donut-wrap { max-width: 145px; }
+  .risk-legend { display: grid; grid-template-columns: 1fr; }
+}

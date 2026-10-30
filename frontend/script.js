@@ -29,7 +29,10 @@ tickClock();
 
 // ---------- data loading ----------
 async function refreshAll() {
-  await Promise.all([loadSummary(), loadInvoices()]);
+  // Load and de-duplicate the ledger first so KPI cards and charts use the
+  // same unique-invoice population as the visible invoice list.
+  await loadInvoices();
+  await loadSummary();
 }
 
 function animateNumeric(el, target, options = {}) {
@@ -58,18 +61,25 @@ async function loadSummary() {
     const res = await fetch(`${API}/dashboard/summary`);
     if (!res.ok) throw new Error(`Dashboard request failed (${res.status})`);
     const s = await res.json();
-    const risk = s.by_risk_category || {};
-    animateNumeric(document.getElementById("statTotal"), s.total_invoices || 0);
-    document.getElementById("statTotalSub").textContent = s.total_invoices ? `${fmtMoney(s.total_taxable_value)} total taxable value` : "No invoices yet";
-    animateNumeric(document.getElementById("statAvg"), s.avg_fraud_score || 0, {decimals:1});
-    animateNumeric(document.getElementById("statHigh"), risk.High || 0);
-    document.getElementById("statHighSub").textContent = `${fmtMoney(s.total_high_risk_amount)} flagged for review`;
-    animateNumeric(document.getElementById("statFail"), s.failed_validation_count || 0);
-    document.getElementById("legLow").textContent = risk.Low || 0;
-    document.getElementById("legMed").textContent = risk.Medium || 0;
-    document.getElementById("legHigh").textContent = risk.High || 0;
+    const rows = allInvoices;
+    const risk = { Low: 0, Medium: 0, High: 0 };
+    rows.forEach(row => { if (risk[row.risk_category] !== undefined) risk[row.risk_category] += 1; });
+    const totalTaxable = rows.reduce((sum, row) => sum + Number(row.taxable_value || 0), 0);
+    const highRiskAmount = rows.filter(row => row.risk_category === "High").reduce((sum, row) => sum + Number(row.total_amount || 0), 0);
+    const failedCount = rows.filter(row => row.validation_passed === false).length;
+    const averageScore = rows.length ? rows.reduce((sum, row) => sum + Number(row.fraud_score || 0), 0) / rows.length : 0;
+    animateNumeric(document.getElementById("statTotal"), rows.length);
+    document.getElementById("statTotalSub").textContent = rows.length ? `${fmtMoney(totalTaxable)} total taxable value` : "No invoices yet";
+    animateNumeric(document.getElementById("statAvg"), averageScore, {decimals:1});
+    animateNumeric(document.getElementById("statHigh"), risk.High);
+    document.getElementById("statHighSub").textContent = `${fmtMoney(highRiskAmount)} flagged for review`;
+    animateNumeric(document.getElementById("statFail"), failedCount);
+    document.getElementById("legLow").textContent = risk.Low;
+    document.getElementById("legMed").textContent = risk.Medium;
+    document.getElementById("legHigh").textContent = risk.High;
     renderDonut(risk);
-    renderTrend(Array.isArray(s.trend) ? s.trend : []);
+    const trend = [...rows].sort((a,b) => String(a.uploaded_at || "").localeCompare(String(b.uploaded_at || ""))).slice(-30);
+    renderTrend(trend);
   } catch (e) {
     console.error("Could not load dashboard summary:", e);
     showToast("Dashboard totals could not load. Check that the backend is running.", true);
@@ -79,7 +89,8 @@ async function loadSummary() {
 async function loadInvoices() {
   try {
     const res = await fetch(`${API}/invoices?limit=5000`);
-    allInvoices = await res.json();
+    const fetchedInvoices = await res.json();
+    allInvoices = deduplicateInvoices(Array.isArray(fetchedInvoices) ? fetchedInvoices : []);
     currentPage = 1;
     renderLedger();
     renderInsightReports();
@@ -89,6 +100,28 @@ async function loadInvoices() {
 }
 
 // ---------- rendering ----------
+// Collapse repeated imports of the same invoice while retaining legitimate
+// same-number invoices when vendor/date/amount differ. Keep the newest row.
+function invoiceFingerprint(row) {
+  const norm = value => String(value ?? "").trim().toUpperCase().replace(/\s+/g, "");
+  const amount = Number(row.total_amount || 0).toFixed(2);
+  const invoiceNo = norm(row.invoice_no);
+  const vendor = norm(row.vendor_gstin || row.vendor_name);
+  const date = norm(row.invoice_date);
+  if (invoiceNo && vendor) return [invoiceNo, vendor, date, amount].join("|");
+  return [norm(row.filename), invoiceNo, vendor, date, amount,
+    norm(row.buyer_gstin), Number(row.taxable_value || 0).toFixed(2)].join("|");
+}
+function deduplicateInvoices(rows) {
+  const seen = new Map();
+  for (const row of rows) {
+    const key = invoiceFingerprint(row);
+    const previous = seen.get(key);
+    if (!previous || Number(row.id || 0) > Number(previous.id || 0)) seen.set(key, row);
+  }
+  return [...seen.values()].sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
+}
+
 function getVisibleInvoices() {
   const query = (document.getElementById("invoiceSearch")?.value || "").trim().toLowerCase();
   const sort = document.getElementById("invoiceSort")?.value || "recent";
